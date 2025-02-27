@@ -1,21 +1,18 @@
 from transformers import RobertaForSequenceClassification, RobertaTokenizer
 import torch
 
-# Cargar el modelo y el tokenizador previamente guardados
+# Cargar el modelo y el tokenizador previamente entrenados con la data reducida
 model = RobertaForSequenceClassification.from_pretrained('./model_test_1')
 tokenizer = RobertaTokenizer.from_pretrained('./model_test_1')
 
-# Definir el mapa de etiquetas
+# Nuevo label_map con solo las clases presentes en la data reducida
 label_map = {
-    0: "Autenticación",
-    1: "Autorización",
-    2: "Encriptación",
-    3: "Validación de entrada",
-    4: "Registro y monitoreo"
+    0: "unrelated",
+    1: "3des"
 }
 
 # Definir la función de predicción
-def predict_tactics(code_snippet):
+def predict_class(code_snippet):
     inputs = tokenizer(code_snippet, padding="max_length", truncation=True, max_length=512, return_tensors="pt")
 
     # Realizar la predicción
@@ -27,33 +24,27 @@ def predict_tactics(code_snippet):
     predicted_class_idx = torch.argmax(logits, dim=-1).item()
 
     # Obtener la clase predicha usando el label_map
-    predicted_tactic = label_map[predicted_class_idx]
-    return predicted_tactic
+    predicted_label = label_map[predicted_class_idx]
+    return predicted_label
 
-# Probar con un fragmento de código
-security_code = """
-class Authenticator:
-    def __init__(self, password):
-        self.password = password
-
-    def validate_password(self, input_password):
-        if input_password == self.password:
-            return True
-        return False
-
-auth = Authenticator("secure_password")
-input_password = "secure_password"
-print(auth.validate_password(input_password))  # Predicción relacionada con autenticación
+# Probar con un fragmento de código relacionado con "3des"
+code_3des = """
+from Crypto.Cipher import DES3
+key = b'Sixteen byte key'
+cipher = DES3.new(key, DES3.MODE_ECB)
+plaintext = b'Attack at dawn'
+ciphertext = cipher.encrypt(plaintext)
 """
 
-# Probar con un fragmento de código no relacionado con la seguridad
-non_security_code = """
+# Probar con un código sin relación ("unrelated")
+code_unrelated = """
 for i in range(1, 11):
-    print(i)  # Simple loop, sin relación con tácticas de seguridad
+    print(i)  # Simple loop, sin relación con criptografía
 """
 
-predicted_tactic_security = predict_tactics(security_code)
-predicted_tactic_non_security = predict_tactics(non_security_code)
+# Realizar las predicciones
+predicted_class_3des = predict_class(code_3des)
+predicted_class_unrelated = predict_class(code_unrelated)
 
-print(f"Táctica de seguridad predicha para el código de seguridad: {predicted_tactic_security}")
-print(f"Táctica de seguridad predicha para el código no relacionado: {predicted_tactic_non_security}")
+print(f"Predicción para código 3DES: {predicted_class_3des}")
+print(f"Predicción para código no relacionado: {predicted_class_unrelated}")

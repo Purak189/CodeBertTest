@@ -7,6 +7,7 @@ from sklearn.metrics import accuracy_score, f1_score
 import torch
 import numpy as np
 from datasets import Dataset
+import ast
 
 # Ruta de la carpeta donde se encuentran los archivos CSV
 folder_path = "src/data"
@@ -27,26 +28,45 @@ all_data = pd.concat(dataframes, ignore_index=True)
 # Preprocesamiento de datos
 all_data = all_data.drop(columns=['id'])  # Eliminar columna id
 all_data['class'] = all_data['class'].astype(str)  # Convertir a string
+all_data['tags'] = all_data['tags'].apply(lambda x: ast.literal_eval(x) if isinstance(x, str) else x)
+
+all_data['text'] = all_data['text'] + " " + all_data['tags'].apply(lambda x: " ".join(x))
+
+unrelated_data = all_data[all_data['class'] == "unrelated"].sample(n=30, random_state=42)
+
+balanced_data = all_data[all_data['class'] != "unrelated"]
+
+# Juntar el dataset balanceado
+all_data = pd.concat([unrelated_data, balanced_data])
+
+# Ver distribución de clases después de reducir "unrelated"
+print(all_data['class'].value_counts())
 
 # Cargar el tokenizador de CodeBERT
 tokenizer = RobertaTokenizer.from_pretrained("microsoft/codebert-base")
 
 # Mapear las categorías de 'class' a números
-label_map = {label: idx for idx, label in enumerate(all_data['class'].unique())}
-all_data['label'] = all_data['class'].map(label_map)
-
-# Obtener las clases únicas de la columna 'class'
 unique_classes = all_data['class'].unique()
-
-# Crear el label_map que asigna un índice a cada clase
 label_map = {label: idx for idx, label in enumerate(unique_classes)}
+all_data['label'] = all_data['class'].map(label_map)
 
 # Mostrar el label_map para ver las clases con sus índices
 print(label_map)
 
+print(all_data.head())  # Ver primeras filas
+print(all_data.dtypes)  # Ver tipos de datos
+print(all_data.isnull().sum())  # Ver valores nulos
+
+print(all_data['class'].value_counts())
+
 
 # Separar los datos en entrenamiento y prueba
-train_data, test_data = train_test_split(all_data, test_size=0.2, random_state=42)
+train_data, test_data = train_test_split(
+    all_data, 
+    test_size=0.2,
+    random_state=42,
+    stratify=all_data['class'] 
+)
 
 # Función para tokenizar los textos
 def tokenize_function(examples):
@@ -62,49 +82,52 @@ test_data = test_data.map(tokenize_function, batched=True)
 
 
 
-# Calcular los pesos de las clases para manejar el desbalance
-# class_weights = compute_class_weight(
-#     'balanced', 
-#     classes=np.unique(list(train_data['label'])),  # Usar los valores de 'label' del Dataset
-#     y=list(train_data['label'])  # Usar los valores de 'label' del Dataset
-# )
+#Calcular los pesos de las clases para manejar el desbalance
+class_weights = compute_class_weight(
+    'balanced', 
+    classes=np.unique(list(train_data['label'])),  # Usar los valores de 'label' del Dataset
+    y=list(train_data['label'])  # Usar los valores de 'label' del Dataset
+)
 
-# # Convertir los pesos de clase a tensores de PyTorch
-# class_weights_tensor = torch.tensor(class_weights, dtype=torch.float)
+# Convertir los pesos de clase a tensores de PyTorch
+class_weights_tensor = torch.tensor(class_weights, dtype=torch.float)
 
-# # Cargar el modelo CodeBERT
-# model = RobertaForSequenceClassification.from_pretrained("microsoft/codebert-base", num_labels=len(np.unique(list(train_data['label']))))
 
-# # Definir los argumentos de entrenamiento
-# training_args = TrainingArguments(
-#     output_dir='./results',          # Directorio de salida
-#     num_train_epochs=3,              # Número de épocas
-#     per_device_train_batch_size=16,  # Tamaño del batch en entrenamiento
-#     per_device_eval_batch_size=64,   # Tamaño del batch en evaluación
-#     warmup_steps=500,                # Pasos de calentamiento
-#     weight_decay=0.01,               # Decaimiento de peso
-#     logging_dir='./logs',            # Directorio de logs
-#     logging_steps=10,
-#     evaluation_strategy="epoch",     # Evaluar por cada época
-#     save_strategy="epoch",
-#     load_best_model_at_end=True      # Cargar el mejor modelo al final
-# )
+print("Preprocesamiento completado. Listo para entrenamiento.")
 
-# # Función de pérdida con pesos de clase
-# trainer = Trainer(
-#     model=model,
-#     args=training_args,
-#     train_dataset=train_data,
-#     eval_dataset=test_data,
-#     compute_metrics=None,  # Si no quieres métricas personalizadas, puedes dejarlo como None
-# )
+# Cargar el modelo CodeBERT
+model = RobertaForSequenceClassification.from_pretrained("microsoft/codebert-base", num_labels=len(np.unique(list(train_data['label']))))
 
-# # Entrenar el modelo
-# trainer.train()
+# Definir los argumentos de entrenamiento
+training_args = TrainingArguments(
+    output_dir='./results',          # Directorio de salida
+    num_train_epochs=3,              # Número de épocas
+    per_device_train_batch_size=16,  # Tamaño del batch en entrenamiento
+    per_device_eval_batch_size=64,   # Tamaño del batch en evaluación
+    warmup_steps=500,                # Pasos de calentamiento
+    weight_decay=0.01,               # Decaimiento de peso
+    logging_dir='./logs',            # Directorio de logs
+    logging_steps=10,
+    evaluation_strategy="epoch",     # Evaluar por cada época
+    save_strategy="epoch",
+    load_best_model_at_end=True      # Cargar el mejor modelo al final
+)
 
-# # Evaluar el modelo
-# results = trainer.evaluate()
-# print(results)
+# Función de pérdida con pesos de clase
+trainer = Trainer(
+    model=model,
+    args=training_args,
+    train_dataset=train_data,
+    eval_dataset=test_data,
+    compute_metrics=None,  # Si no quieres métricas personalizadas, puedes dejarlo como None
+)
 
-# model.save_pretrained('./model_test_1')
-# tokenizer.save_pretrained('./model_test_1')
+# Entrenar el modelo
+trainer.train()
+
+# Evaluar el modelo
+results = trainer.evaluate()
+print(results)
+
+model.save_pretrained('./model_test_1')
+tokenizer.save_pretrained('./model_test_1')
